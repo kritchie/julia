@@ -2084,6 +2084,10 @@ end
 @deprecate range(start::DateTime, len::Integer)  range(start, Dates.Day(1), len)
 @deprecate range(start::Date, len::Integer)      range(start, Dates.Day(1), len)
 
+# issue #24019
+@deprecate similar(a::Associative) empty(a)
+@deprecate similar(a::Associative, ::Type{Pair{K,V}}) where {K, V} empty(a, K, V)
+
 # END 0.7 deprecations
 
 # BEGIN 1.0 deprecations
