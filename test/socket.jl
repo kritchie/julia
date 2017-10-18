@@ -414,3 +414,15 @@ end
         @test 0 == ccall(:jl_tcp_reuseport, Int32, (Ptr{Void},), s.handle)
     end
 end
+
+@static if Sys.isapple()
+    @testset "Issues #18818 and #24169" begin
+        ulimit = readchomp(`ulimit -S -s`)
+        try
+            run(`ulimit -S -s 7001`)
+            @test success(`$(Base.julia_cmd()) --startup-file=no -e 'getaddrinfo("localhost")'`)
+        finally
+            run(`ulimit -S -s $ulimit`)
+        end
+    end
+end
