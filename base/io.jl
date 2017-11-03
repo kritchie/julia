@@ -455,7 +455,7 @@ function read(s::IO, ::Type{Char})
     n = leading_ones(b0)
     c = UInt32(b0)
     if n <= 4
-        while 1 < n
+        while 1 < n && !eof(s)
             peek(s) & 0xc0 == 0x80 || break
             b = read(s, UInt8)
             c <<= 8

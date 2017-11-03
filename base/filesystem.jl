@@ -154,7 +154,7 @@ function read(f::File, ::Type{Char})
     n = leading_ones(b0)
     c = UInt32(b0)
     if n <= 4
-        while 1 < n
+        while 1 < n && !eof(f)
             p = position(f)
             b = read(f, UInt8)
             if b & 0xc0 != 0x80
