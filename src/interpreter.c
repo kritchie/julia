@@ -634,11 +634,10 @@ static jl_value_t *eval_body(jl_array_t *stmts, interpreter_state *s, int start,
     return NULL;
 }
 
-jl_value_t *jl_interpret_call(jl_method_instance_t *lam, jl_value_t **args, uint32_t nargs)
+jl_code_info_t *jl_code_for_interpreter(jl_method_instance_t *lam)
 {
-    if (lam->jlcall_api == JL_API_CONST)
-        return lam->inferred_const;
     jl_code_info_t *src = (jl_code_info_t*)lam->inferred;
+    JL_GC_PUSH1(&src);
     if (!src || (jl_value_t*)src == jl_nothing) {
         if (lam->def.method->source) {
             src = (jl_code_info_t*)lam->def.method->source;
@@ -646,18 +645,25 @@ jl_value_t *jl_interpret_call(jl_method_instance_t *lam, jl_value_t **args, uint
         else {
             assert(lam->def.method->generator);
             src = jl_code_for_staged(lam);
-            lam->inferred = (jl_value_t*)src;
-            jl_gc_wb(lam, src);
         }
     }
     if (src && (jl_value_t*)src != jl_nothing) {
         src = jl_uncompress_ast(lam->def.method, (jl_array_t*)src);
-        lam->inferred = (jl_value_t*)src;
-        jl_gc_wb(lam, src);
     }
     if (!src || !jl_is_code_info(src)) {
         jl_error("source missing for method called in interpreter");
     }
+    JL_GC_POP();
+    return src;
+}
+
+jl_value_t *jl_interpret_call(jl_method_instance_t *lam, jl_value_t **args, uint32_t nargs)
+{
+    if (lam->jlcall_api == JL_API_CONST)
+        return lam->inferred_const;
+    jl_code_info_t *src = jl_code_for_interpreter(lam);
+    lam->inferred = (jl_value_t*)src;
+    jl_gc_wb(lam, src);
 
     jl_array_t *stmts = src->code;
     assert(jl_typeis(stmts, jl_array_any_type));
