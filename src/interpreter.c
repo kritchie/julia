@@ -20,6 +20,7 @@ typedef struct {
     jl_value_t **locals; // slots for holding local slots and ssavalues
     jl_svec_t *sparam_vals; // method static parameters, if eval-ing a method body
     int preevaluation; // use special rules for pre-evaluating expressions
+    int continue_at; // statement index to jump to after leaving exception handler (0 if none)
 } interpreter_state;
 
 static jl_value_t *eval(jl_value_t *e, interpreter_state *s);
@@ -44,6 +45,7 @@ jl_value_t *jl_interpret_toplevel_expr_in(jl_module_t *m, jl_value_t *e,
     s.module = m;
     s.sparam_vals = sparam_vals;
     s.preevaluation = (sparam_vals != NULL);
+    s.continue_at = 0;
 
     JL_TRY {
         ptls->current_task->current_module = ptls->current_module = m;
@@ -242,7 +244,7 @@ static jl_value_t *eval(jl_value_t *e, interpreter_state *s)
             defined = jl_boundp(modu, (jl_sym_t*)sym);
         }
         else if (jl_is_expr(sym) && ((jl_expr_t*)sym)->head == static_parameter_sym) {
-            ssize_t n = jl_unbox_long(args[0]);
+            ssize_t n = jl_unbox_long(jl_exprarg(sym, 0));
             assert(n > 0);
             if (s->sparam_vals && n <= jl_svec_len(s->sparam_vals)) {
                 jl_value_t *sp = jl_svecref(s->sparam_vals, n - 1);
@@ -521,6 +523,7 @@ jl_value_t *jl_toplevel_eval_body(jl_module_t *m, jl_array_t *stmts)
     size_t last_age = jl_get_ptls_states()->world_age;
     interpreter_state s = {};
     s.module = m;
+    s.continue_at = 0;
     jl_value_t *ret = eval_body(stmts, &s, 0, 1);
     jl_get_ptls_states()->world_age = last_age;
     return ret;
@@ -593,6 +596,11 @@ static jl_value_t *eval_body(jl_array_t *stmts, interpreter_state *s, int start,
                 if (!jl_setjmp(__eh.eh_ctx,1)) {
                     return eval_body(stmts, s, i + 1, toplevel);
                 }
+                else if (s->continue_at) {
+                    i = s->continue_at;
+                    s->continue_at = 0;
+                    continue;
+                }
                 else {
 #ifdef _OS_WINDOWS_
                     if (jl_get_ptls_states()->exception_in_transit == jl_stackovf_exception)
@@ -604,7 +612,16 @@ static jl_value_t *eval_body(jl_array_t *stmts, interpreter_state *s, int start,
             }
             else if (head == leave_sym) {
                 int hand_n_leave = jl_unbox_long(jl_exprarg(stmt,0));
-                jl_pop_handler(hand_n_leave);
+                assert(hand_n_leave > 0);
+                // equivalent to jl_pop_handler(hand_n_leave) :
+                jl_ptls_t ptls = jl_get_ptls_states();
+                jl_handler_t *eh = ptls->current_task->eh;
+                while (--hand_n_leave > 0)
+                    eh = eh->prev;
+                jl_eh_restore_state(eh);
+                // pop jmp_bufs from stack
+                s->continue_at = i + 1;
+                jl_longjmp(eh->eh_ctx, 1);
             }
             else if (toplevel && jl_is_toplevel_only_expr(stmt)) {
                 jl_toplevel_eval(s->module, stmt);
@@ -676,6 +693,7 @@ jl_value_t *jl_interpret_call(jl_method_instance_t *lam, jl_value_t **args, uint
     s.module = lam->def.method->module;
     s.locals = locals + 2;
     s.sparam_vals = lam->sparam_vals;
+    s.continue_at = 0;
     size_t i;
     for (i = 0; i < lam->def.method->nargs; i++) {
         if (lam->def.method->isva && i == lam->def.method->nargs - 1)
@@ -699,6 +717,7 @@ jl_value_t *jl_interpret_toplevel_thunk(jl_module_t *m, jl_code_info_t *src)
     s.locals = locals;
     s.module = m;
     s.sparam_vals = jl_emptysvec;
+    s.continue_at = 0;
     size_t last_age = jl_get_ptls_states()->world_age;
     jl_value_t *r = eval_body(stmts, &s, 0, 1);
     jl_get_ptls_states()->world_age = last_age;
